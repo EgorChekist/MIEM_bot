@@ -39,6 +39,14 @@ async def start(message):
     chat_id = message.chat.id
     await bot.send_message(chat_id, HELLO_TEXT)
 
+@bot.message_handler(content_types=['text'])
+async def text(message):
+    '''
+    Функция приветствия. Реагирует на команду /start
+    '''
+    chat_id = message.chat.id
+    await bot.send_message(chat_id, HELLO_TEXT)
+
 
 asyncio.run(bot.polling())
 

@@ -109,6 +109,49 @@ def generate_amswer(prompt):
   return tokenizer.decode(outputs[0][inputs["input_ids"].shape[-1]:])
 
 
+def prompt(question: str,
+           vector_store,
+           k: int = 5) -> str:
+    docs = vector_store.max_marginal_relevance_search(
+        question,
+        k=k
+    )
+
+    if not docs:
+        return f"""
+Контекст отсутствует.
+
+Вопрос студента:
+{question}
+"""
+
+    # Собираем контекст
+    context_blocks = []
+    for i, doc in enumerate(docs):
+        context_blocks.append(
+            f"[Источник {i + 1} | {doc.metadata.get('source', 'unknown')}]\n"
+            f"{doc.page_content.strip()}"
+        )
+
+    context = "\n\n".join(context_blocks)
+
+    # Итоговый prompt
+    prompt = f"""
+Контекст из базы знаний университета:
+
+{context}
+
+Вопрос студента:
+{question}
+
+Инструкция:
+Ответь строго на основе приведённого контекста.
+Не добавляй информацию извне.
+Если в контексте нет ответа, напиши:
+"Я не обладаю подобной информацией, рекомендую вам обратиться в учебный офис."
+"""
+
+    return prompt
 
 
 #Если хотите, тут можно менять модели
@@ -120,7 +163,7 @@ model = AutoModelForCausalLM.from_pretrained(
     model_id,
     device_map="auto",
     torch_dtype=torch.float16,  # Используем float16
-    load_in_4bit=True,  # 4-битное квантование
+    #load_in_4bit=True,  # 4-битное квантование
     low_cpu_mem_usage=True,
 )
 
@@ -148,7 +191,8 @@ for file in files:
                         "source":file
                     }))
 
-# Тут мы начинаем создавать веткорную базу из наших разбитых текстов
+
+# Тут мы начинаем создавать векторную базу из наших разбитых текстов
 from langchain_huggingface import HuggingFaceEmbeddings
 
 os.environ["HF_TOKEN"] = "ТОКЕН HF"
@@ -165,8 +209,8 @@ emb = HuggingFaceEmbeddings(model_name="sentence-transformers/distiluse-base-mul
 
 # Сохранение полученных чанков в векторную  базу.
 
-# from langchain_community.vectorstores import FAISS  # UPDATED
-#
+from langchain_community.vectorstores import FAISS  # UPDATED
+
 # vector_storeF1 = FAISS.from_documents(
 #     main_doc, emb
 # )
@@ -174,49 +218,50 @@ emb = HuggingFaceEmbeddings(model_name="sentence-transformers/distiluse-base-mul
 # vector_storeF1.save_local("vector_storeF1")
 
 #Если есть уже векторная база, можно просто загрузить её из файла
-# vector_storeF1 = FAISS.load_local(
-#     "/content/vector_storeF1",  # папка с сохраненным индексом
-#     emb,
-#     allow_dangerous_deserialization=True  # необходимо в новых версиях LangChain
-# )
+vector_storeF1 = FAISS.load_local(
+    "/vector_store",  # папка с сохраненным индексом
+    emb,
+    allow_dangerous_deserialization=True  # необходимо в новых версиях LangChain
+)
 
-from langchain_community.vectorstores import FAISS
+# from langchain_community.vectorstores import FAISS
+#
+# texts = [doc.page_content for doc in main_doc]
+# meta = [doc.metadata for doc in main_doc]
+#
+# vector_store = None
+#
+# batch_size = 64
+# for i in range(0, len(text), batch_size):
+#   batch_text = texts[i:i+batch_size]
+#   batch_meta = meta[i:i+batch_size]
+#
+#   batch_emb = emb.embed_documents(batch_text)
+#
+#   if vector_store is None:
+#     vector_store = FAISS.from_embeddings(
+#       text_embeddings=list(zip(batch_text, batch_emb)),
+#       embedding=emb,
+#       metadatas=batch_meta
+#     )
+#   else:
+#     vector_store.add_embeddings(
+#       text_embeddings=list(zip(batch_text, batch_emb)),
+#       metadatas=batch_meta
+#     )
 
-texts = [doc.page_content for doc in main_doc]
-meta = [doc.metadata for doc in main_doc]
 
-vector_store = None
-
-batch_size = 64
-for i in range(0, len(text), batch_size):
-  batch_text = texts[i:i+batch_size]
-  batch_meta = meta[i:i+batch_size]
-
-  batch_emb = emb.embed_documents(batch_text)
-
-  if vector_store is None:
-    vector_store = FAISS.from_embeddings(
-      text_embeddings=list(zip(batch_text, batch_emb)),
-      embedding=emb,
-      metadatas=batch_meta
-    )
-  else:
-    vector_store.add_embeddings(
-      text_embeddings=list(zip(batch_text, batch_emb)),
-      metadatas=batch_meta
-    )
-
-
-vector_store.save_local("vector_store")
-
-#Можно выделить их в отудб\льную функцию чтобы он брат отсюда информаицю из текстов
-# вставлять полученне чанки как контекст в системный промпт и давать ответ по этому контекста
-vector_store.max_marginal_relevance_search(
-      "Вопрос нашего студента",
-      k=10, #Сколько самых подходящих чанков он вернёт
-      filter={"book_ru": "ИУП"} # Тут можно указать фильтр по метаданным.
-  )
-
+# vector_store.save_local("vector_store")
+#
+# #Можно выделить их в отдельную функцию чтобы он брат отсюда информацию из текстов
+# # вставлять полученные чанки как контекст в системный промпт и давать ответ по этому контекста
+#
+# vector_store.max_marginal_relevance_search(
+#       "Вопрос нашего студента",
+#       k=10, #Сколько самых подходящих чанков он вернёт
+#       filter={"book_ru": "ИУП"} # Тут можно указать фильтр по метаданным.
+#   )
+#
 
 
 

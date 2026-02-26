@@ -1,20 +1,24 @@
 import os
-from typing import List, Dict, Tuple, Optional
+import re
+import glob
+import torch
+
 import numpy as np
+from typing import List, Dict, Tuple, Optional
 from pathlib import Path
 from langchain_community.document_loaders import TextLoader
-import re
-import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
-
+from langchain_core.documents import Document
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.vectorstores import FAISS
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
 
 class SemanticChunkerSelf:
     """Semantic chunking: разбивка по семантическим границам"""
-
     def __init__(self, embedding_model_name: str = "BAAI/bge-m3", threshold_percentile: int = 90,max_chunk_size=1000,
         min_chunk_size=200,
         device="cuda"):
-        from sentence_transformers import SentenceTransformer
 
         self.embedding_model = SentenceTransformer(embedding_model_name)
         self.threshold_percentile = threshold_percentile
@@ -23,8 +27,6 @@ class SemanticChunkerSelf:
 
     def chunk_text(self, text: str) -> List[str]:
         """Semantic chunking"""
-        import re
-        from sklearn.metrics.pairwise import cosine_similarity
 
         sentences = re.split(r'[.!?]+', text)
         sentences = [s.strip() for s in sentences if s.strip()]
@@ -124,11 +126,11 @@ model = AutoModelForCausalLM.from_pretrained(
     low_cpu_mem_usage=True,
 )
 
-from langchain_core.documents import Document
+
 #Тут наш текст разбивается непосредственно на чанки.
 # Если уже есть векторная разбитая база, оно нам не нужно
 
-import glob
+
 
 files  = glob.glob("/content/dataset/**/*.txt", recursive=True)
 main_doc = []
@@ -149,7 +151,7 @@ for file in files:
                     }))
 
 # Тут мы начинаем создавать веткорную базу из наших разбитых текстов
-from langchain_huggingface import HuggingFaceEmbeddings
+
 
 os.environ["HF_TOKEN"] = "ТОКЕН HF"
 
@@ -180,7 +182,7 @@ emb = HuggingFaceEmbeddings(model_name="sentence-transformers/distiluse-base-mul
 #     allow_dangerous_deserialization=True  # необходимо в новых версиях LangChain
 # )
 
-from langchain_community.vectorstores import FAISS
+
 
 texts = [doc.page_content for doc in main_doc]
 meta = [doc.metadata for doc in main_doc]

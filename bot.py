@@ -4,7 +4,7 @@ import os
 from dotenv import load_dotenv
 from LLMWithRag import prompt  # твоя функция RAG
 from huggingface_hub import InferenceClient
-from langchain.vectorstores import FAISS
+from langchain_community.vectorstores import FAISS
 from langchain.embeddings.openai import OpenAIEmbeddings
 
 load_dotenv()
@@ -22,7 +22,20 @@ HELPER_TEXT = '''
 '''
 
 # Загружаем FAISS vector store из папки
-vector_store = FAISS.load_local("./vector_store", OpenAIEmbeddings())
+embeddings = HuggingFaceEmbeddings(
+    model_name="Alibaba-NLP/gte-multilingual-base",
+    model_kwargs={
+        "device": "cuda" if torch.cuda.is_available() else "cpu",
+        "trust_remote_code": True,
+    },
+    encode_kwargs={"normalize_embeddings": True},
+)
+
+vector_store = FAISS.load_local(
+    "vector_store",
+    embeddings,
+    allow_dangerous_deserialization=True,
+)
 
 client = InferenceClient(token=os.getenv("HF_TOKEN"))
 

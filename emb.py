@@ -1,93 +1,132 @@
 
 """
-!pip install -U langchain-community unstructured langchain-text-splitters langchain_huggingface torch
-!pip install faiss-cpu langchain-community -q
-
-Это файл с чанкингом и созданием векторной базы данных. В сам бот его всталвлять не надо, но все документы через него прогнать, а полученную vector_store уже скормить боту
-Сейчас здесь допотопный, но быстрый чанкинг для быстрого тестирования. Потом заменю его на Semantic chunking по смыслу
-Если что-то не будет работать пишите мне (Стелла)
+!pip cache purge
+!pip install -qU langchain_huggingface transformers bitsandbytes
+!pip install -q torch torchvision --index-url https://download.pytorch.org/whl/cpu
+!pip install -qU langchain_community langchain_core
+!pip install faiss-cpu
+!pip install docx2txt
 """
 
 
 
 import os
 import gc
-from langchain_community.document_loaders import TextLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_huggingface import HuggingFaceEmbeddings
 import torch
-import json
 
-#работа с текстом, сплит, чанки
-splitter = RecursiveCharacterTextSplitter(
-    chunk_size=500,
-    chunk_overlap=100,
-    length_function=len,
-)
+from typing import List
+
+from langchain_huggingface import HuggingFaceEmbeddings
+from langchain_community.vectorstores import FAISS
+from langchain_community.document_loaders import Docx2txtLoader
+from langchain_core.documents import Document
+from langchain_core.embeddings import Embeddings
+
+from SemanticChunker import SemanticChunker
 
 
-all_chunks = []
-folder_path = '/content/data/'
+class PrefixedEmbeddings(Embeddings):
+    def __init__(self, base_embeddings):
+        self.base = base_embeddings
 
-for root, dirs, files in os.walk(folder_path):
-    for filename in files:
-        if filename.endswith('.md'):
-            filepath = os.path.join(root, filename)
+    def embed_documents(self, texts: List[str]) -> List[List[float]]:
+        # добавляем префикс для документов
+        prefixed = [f"document: {t}" for t in texts]
+        return self.base.embed_documents(prefixed)
 
-            print(f"Обрабатываю: {filepath}")
+    def embed_query(self, text: str) -> List[float]:
+        # добавляем префикс для запроса
+        return self.base.embed_query(f"query: {text}")
 
-            try:
-                loader = TextLoader(filepath)
-                docs = loader.load()
 
-                chunks = splitter.split_documents(docs)
-                all_chunks.extend(chunks)
+torch.cuda.empty_cache()
+gc.collect()
 
-                print(f"  Создано {len(chunks)} чанков")
-
-                del docs, chunks
-                gc.collect()
-
-            except Exception as e:
-                print(f"  Ошибка при обработке {filename}: {e}")
-
-print(f"\nВсего обработано файлов: {len(all_chunks)} чанков")
-
-#модель для эмбеддинга
-embeddings = HuggingFaceEmbeddings(
+base_embeddings = HuggingFaceEmbeddings(
     model_name="Alibaba-NLP/gte-multilingual-base",
     model_kwargs={
         "device": "cuda" if torch.cuda.is_available() else "cpu",
-        "trust_remote_code": True
+        "trust_remote_code": True,
     },
     encode_kwargs={
         "normalize_embeddings": True,
-    }
+    },
 )
 
-from langchain_community.vectorstores import FAISS
 
-#готовим чанки
-prepared_chunks = []
+embeddings = PrefixedEmbeddings(base_embeddings)
 
-for chunk in all_chunks:
-    prepared_chunks.append({
+semantic_chunker = SemanticChunker(
+    embedding_model=embeddings,
+    max_chunk_size=900,
+    similarity_threshold=0.6,
+)
+
+all_chunks: List[Document] = []
+folder_path = "/content/data/"
+
+for root, _, files in os.walk(folder_path):
+    for filename in files:
+        if not filename.endswith(".docx"):
+            continue
+
+        filepath = os.path.join(root, filename)
+        print(f"Текущий файл {filepath}")
+        loader = Docx2txtLoader(filepath)
+        docs = loader.load()
+
+        for doc in docs:
+            semantic_chunks = semantic_chunker.chunk_text(
+                doc.page_content
+            )
+
+            for chunk_text in semantic_chunks:
+                all_chunks.append(
+                    Document(
+                        page_content=chunk_text,
+                        metadata=doc.metadata,
+                    )
+                )
+
+        del docs
+        gc.collect()
+
+
+prepared_chunks = [
+    {
         "text": chunk.page_content,
-        "source": chunk.metadata.get("source", "")
-    })
+        "source": chunk.metadata.get("source", ""),
+    }
+    for chunk in all_chunks
+]
 
-#with open("data/chunks.json", "w", encoding="utf-8") as f:
-#    json.dump(prepared_chunks, f, ensure_ascii=False, indent=2)
+BATCH_SIZE = 16
 
 texts = [c["text"] for c in prepared_chunks]
 metadatas = [{"source": c["source"]} for c in prepared_chunks]
 
+first_texts = texts[:BATCH_SIZE]
+first_metadatas = metadatas[:BATCH_SIZE]
+
 vector_store = FAISS.from_texts(
-    texts=texts,
+    texts=first_texts,
     embedding=embeddings,
-    metadatas=metadatas
+    metadatas=first_metadatas,
 )
 
-vector_store.save_local("vector_store")
 
-#vector_store.similarity_search("Вопрос для проверки",k=3)
+for i in range(BATCH_SIZE, len(texts), BATCH_SIZE):
+    batch_texts = texts[i:i + BATCH_SIZE]
+    batch_metadatas = metadatas[i:i + BATCH_SIZE]
+
+    vector_store.add_texts(
+        texts=batch_texts,
+        metadatas=batch_metadatas,
+    )
+
+    torch.cuda.empty_cache()
+    gc.collect()
+
+    print(f"{i + len(batch_texts)} / {len(texts)}")
+
+vector_store.save_local("vector_store")

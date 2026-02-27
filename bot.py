@@ -2,10 +2,17 @@ from telebot.async_telebot import AsyncTeleBot
 import asyncio
 import os
 from dotenv import load_dotenv
-from LLMWithRag import prompt  # твоя функция RAG
 from huggingface_hub import InferenceClient
+
+from typing import List
+from langchain_core.documents import Document
 from langchain_community.vectorstores import FAISS
-from langchain.embeddings.openai import OpenAIEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
+
+import torch
+from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
+
+
 
 load_dotenv()
 bot = AsyncTeleBot(os.getenv("BOT_TOKEN"))
@@ -18,10 +25,22 @@ HELPER_TEXT = '''
 🛠 Список команд 🛠: 
 
 📌 /start - Начать 🚩
-📌 /prompt - Промпт 🚩
 '''
 
-# Загружаем FAISS vector store из папки
+MODEL_ID = "Qwen/Qwen2.5-7B-Instruct"
+
+tokenizer = AutoTokenizer.from_pretrained(
+    MODEL_ID,
+    trust_remote_code=True,
+)
+
+model = AutoModelForCausalLM.from_pretrained(
+    MODEL_ID,
+    device_map="auto",
+    dtype=torch.float16,
+    trust_remote_code=True,
+)
+
 embeddings = HuggingFaceEmbeddings(
     model_name="Alibaba-NLP/gte-multilingual-base",
     model_kwargs={
@@ -32,60 +51,87 @@ embeddings = HuggingFaceEmbeddings(
 )
 
 vector_store = FAISS.load_local(
-    "vector_store",
+    "/content/vector_store",
     embeddings,
     allow_dangerous_deserialization=True,
 )
 
-client = InferenceClient(token=os.getenv("HF_TOKEN"))
+
+retriever = vector_store.as_retriever(
+    search_type="mmr",
+    search_kwargs={
+        "k": 5,
+        "fetch_k": 15,
+        "lambda_mult": 0.7,
+    },
+)
+
+llm = pipeline(
+    "text-generation",
+    model=model,
+    tokenizer=tokenizer,
+    max_new_tokens=70,
+    do_sample=False,
+    temperature=0.2,
+    repetition_penalty=1.2,
+    return_full_text=False,
+)
+
+def build_rag_prompt(question: str, docs: List[Document]) -> str:
+    context = "\n\n".join([d.page_content for d in docs if (d.page_content or "").strip()])
+
+    return f"""Ты — дружелюбный помощник, который должен правильно ответить на вопрос на основе предоставленной информации.
+Вопрос:
+{question}
+
+Предоставленная информация:
+{context}
+
+Используй ТОЛЬКО информацию из документов. Отвечай максимально подробно.
+Ответ:
+"""
+
 
 @bot.message_handler(commands=["start"])
 async def start_command(message):
-    '''
-    Функция приветствия. Реагирует на команду /start
-    '''
     chat_id = message.chat.id
     await bot.send_message(chat_id, HELLO_TEXT)
 
-@bot.message_handler(commands=["prompt"])
-async def prompt_command(message):
-    '''
-    Функция промпта
-    '''
+
+
+@bot.message_handler(content_types=["text"])
+async def qa_handler(message):
     chat_id = message.chat.id
-    args = message.text.split(maxsplit=1)
+    text = (message.text or "").strip()
+    if not text:
+        return
 
-    if len(args) > 1:
-        text = args[1]
+    if text.startswith("/") and text != "/start":
+        await bot.send_message(chat_id, "Доступна только команда /start. Просто напиши вопрос текстом.")
+        return
 
-        # RAG ответ
-        docs = vector_store.max_marginal_relevance_search(text, k=5)
-        rag_answer = "\n\n".join([doc.page_content for doc in docs])
-        await bot.send_message(chat_id, f"RAG ответ:\n{rag_answer}")
 
-        # HF LLM ответ через executor
-        loop = asyncio.get_event_loop()
-        hf_response = await loop.run_in_executor(
-            None,
-            lambda: client.chat_completion(
-                model="Qwen/Qwen2.5-7B-Instruct",
-                messages=[{"role": "user", "content": text}],
-                max_tokens=5
-            )
-        )
-        assistant_text = hf_response.choices[0].message.content
-        await bot.send_message(chat_id, f"LLM ответ:\n{assistant_text}")
+    try:
+        docs = await retriever.ainvoke(text)
+    except Exception as e:
+        await bot.send_message(chat_id, f"Ошибка при поиске по базе: {e}")
+        return
 
-    else:
-        await bot.send_message(chat_id, 'Ниче не получил')
+    prompt = build_rag_prompt(text, docs)
 
-@bot.message_handler(content_types=['text'])
-async def text_handler(message):
-    '''
-    Функция приветствия. Реагирует на команду /start
-    '''
-    chat_id = message.chat.id
-    await bot.send_message(chat_id, HELLO_TEXT)
+    try:
+        loop = asyncio.get_running_loop()
+        answer = await loop.run_in_executor(None, lambda: llm(prompt)[0]["generated_text"].strip())
+    except Exception as e:
+        await bot.send_message(chat_id, f"Ошибка при генерации ответа: {e}")
+        return
+
+    await bot.send_message(chat_id, answer)
+
 
 if __name__ == "__main__":
-    asyncio.run(bot.polling())
+    try: #это для колаба. не убирайте
+        loop = asyncio.get_running_loop()
+        loop.create_task(bot.polling())
+    except RuntimeError:
+        asyncio.run(bot.polling())

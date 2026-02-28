@@ -22,9 +22,22 @@ HELLO_TEXT = '''
 '''
 
 HELPER_TEXT = '''
-🛠 Список команд 🛠: 
+🛠 *Список команд* 🛠
 
 📌 /start - Начать 🚩
+Запускает бота и инициализирует работу.
+
+📌 /help - Помощь 🚩
+Показывает это сообщение.
+
+📌 /prompt - Промпт 🚩
+Бот вытаскивает информацию из документов университета с помощью RAG.
+📖 *Как пользоваться:*
+`/prompt <текст промпта>`
+Пример:
+`/prompt Какие сроки подачи курсовой работы?`
+Бот найдёт релевантные фрагменты в базе документов и сформирует ответ на их основе.
+
 '''
 
 MODEL_ID = "Qwen/Qwen2.5-7B-Instruct"
@@ -96,6 +109,14 @@ def build_rag_prompt(question: str, docs: List[Document]) -> str:
 async def start_command(message):
     chat_id = message.chat.id
     await bot.send_message(chat_id, HELLO_TEXT)
+
+@bot.message_handler(commands=["help"])
+async def start_command(message):
+    '''
+    Функция помощи. Реагирует на команду /help
+    '''
+    chat_id = message.chat.id
+    await bot.send_message(chat_id, HELPER_TEXT)
 
 
 

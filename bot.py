@@ -111,7 +111,7 @@ async def start_command(message):
     await bot.send_message(chat_id, HELLO_TEXT)
 
 @bot.message_handler(commands=["help"])
-async def start_command(message):
+async def help_command(message):
     '''
     Функция помощи. Реагирует на команду /help
     '''

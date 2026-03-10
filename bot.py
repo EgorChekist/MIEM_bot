@@ -19,6 +19,10 @@ from langchain_huggingface import HuggingFaceEmbeddings
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 
+from database import Database
+
+db = Database("database/database.db")
+
 
 class BotStates(StatesGroup):
     waiting_for_message = State()
@@ -119,19 +123,32 @@ users = {
 #     return_full_text=False,
 # )
 
-def build_rag_prompt(question: str, docs: List[Document]) -> str:
-    context = "\n\n".join([d.page_content for d in docs if (d.page_content or "").strip()])
+# def build_rag_prompt(question: str, docs: List[Document]) -> str:
+#     context = "\n\n".join([d.page_content for d in docs if (d.page_content or "").strip()])
+#
+#     return f"""Ты — дружелюбный помощник, который должен правильно ответить на вопрос на основе предоставленной информации.
+# Вопрос:
+# {question}
+#
+# Предоставленная информация:
+# {context}
+#
+# Используй ТОЛЬКО информацию из документов. Отвечай максимально подробно.
+# Ответ:
+# """
 
-    return f"""Ты — дружелюбный помощник, который должен правильно ответить на вопрос на основе предоставленной информации.
-Вопрос:
-{question}
 
-Предоставленная информация:
-{context}
-
-Используй ТОЛЬКО информацию из документов. Отвечай максимально подробно.
-Ответ:
-"""
+# Команда, чтобы узнать статус пользователя: Админ, Студент, Гость
+@bot.message_handler(commands=["status"])
+async def get_status(message):
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+    query = db.get_user(user_id)
+    print(query)
+    if query is None:
+        await bot.send_message(chat_id, "Ваш статус - Гость")
+    else:
+        await bot.send_message(chat_id, f"Ваш статус - {query[-1]}")
 
 
 @bot.message_handler(commands=["start"])
@@ -248,6 +265,18 @@ async def mail(message):
     """
         Функция для отправки массовых рассылок
     """
+
+    # Сначала получает статус отправителя команды /main, чтобы её могли использовать только люди со статусом admin
+    chat_id = message.chat.id
+    user_id = message.from_user.id
+    query = db.get_user(user_id)
+    print(query)
+    if query is None:
+        await bot.send_message(chat_id, "Ваш статус - Гость. Вы не можете использовать данную команду")
+        return
+    elif query[-1] != "admin":
+        await bot.send_message(chat_id, f"Ваш статус - {query[-1]}. Вы не можете использовать данную команду")
+        return
     print(message)
     print(message.from_user.id)
     markup = types.InlineKeyboardMarkup()
@@ -256,7 +285,7 @@ async def mail(message):
     btn3 = types.InlineKeyboardButton("Сброс", callback_data=f"reset_{message.from_user.id}")
     btn4 = types.InlineKeyboardButton("Подтвердить категории", callback_data=f"confirm_{message.from_user.id}")
     markup.add(btn1, btn2, btn3, btn4)
-    chat_id = message.chat.id
+
     await bot.send_message(chat_id,
                            MAIL_TEXT,
                            reply_markup=markup)

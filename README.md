@@ -40,13 +40,13 @@
 
 # Стек 
 
-Язык: Python 3.10+
-Telegram API: AsyncTeleBot
-Обработка документов: docx2txt, langchain-community
-Эмбеддинги: HuggingFaceEmbeddings (модель Alibaba-NLP/gte-multilingual-base)
-Векторная база данных: FAISS
-Генерация: Qwen2.5-7B-Instruct, transformers
-Память: torch, gc, bitsandbytes
+1. Язык: Python 3.10+
+2. Telegram API: AsyncTeleBot
+3. Обработка документов: docx2txt, langchain-community
+4. Эмбеддинги: HuggingFaceEmbeddings (модель Alibaba-NLP/gte-multilingual-base)
+5. Векторная база данных: FAISS
+6. Генерация: Qwen2.5-7B-Instruct, transformers
+7. Память: torch, gc, bitsandbytes
 
 # User story
 
@@ -87,9 +87,7 @@ Telegram API: AsyncTeleBot
 4. Установить необходимые зависимости командой `pip install -r requirements.txt`
 5. Создать **.env** файл по следующему шаблону
  
+````
 BOT_TOKEN = 'ВАШ_ТОКЕН'
 
 HF_TOKEN='ВАШ_ТОКЕН'
-
-````
-

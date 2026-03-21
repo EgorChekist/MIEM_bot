@@ -34,7 +34,12 @@ class Database:
         categories_query = """
         CREATE TABLE IF NOT EXISTS "categories" (
             "student_id" INTEGER NOT NULL,
-            "category" TEXT NOT NULL,
+            "gender" VARCHAR(2) NOT NULL,
+            "degree" VARCHAR(30) NOT NULL,
+            "year" INTEGER NOT NULL,
+            "program" VARCHAR(160) NOT NULL,
+            "group" VARCHAR(20) NOT NULL,
+            "category" VARCHAR(10) NOT NULL,
             FOREIGN KEY("student_id") REFERENCES "users"("id")
         );
         """
@@ -51,15 +56,54 @@ class Database:
         query = "SELECT * FROM users WHERE user_id = ?"
         return self._execute(query, (user_id,), fetchone=True)
 
-
-    def add_category(self, student_internal_id, category_name):
+    def add_category(self, student_internal_id, student_gender, student_degree, student_year, student_program,
+                     student_group,
+                     student_category):
         """Добавление категории (используется внутренний id из таблицы users)."""
-        query = "INSERT INTO categories (student_id, category) VALUES (?, ?)"
-        return self._execute(query, (student_internal_id, category_name), commit=True)
+        query = """INSERT INTO categories ("student_id", "gender","degree", "year", "program", "group", "category") VALUES (?, ?, ?, ?, ?, ?, ?)"""
+        return self._execute(query, (
+            student_internal_id, student_gender, student_degree, student_year, student_program, student_group,
+            student_category),
+                             commit=True)
+
+    def get_filtered_users(self, filters, mode="AND"):
+        """
+        filters: dict типа {'year': ['1', '2'], 'program': ['ИВТ']}
+        mode: "AND" или "OR"
+        """
+        if not filters:
+            return []
+
+        query = """
+            SELECT DISTINCT u.user_id 
+            FROM users u 
+            JOIN categories c ON u.id = c.student_id 
+            WHERE 
+        """
+
+        conditions = []
+        params = []
+
+        for column, values in filters.items():
+            if values:
+                # Создаем строку вида: column IN (?, ?, ?)
+                placeholders = ", ".join(["?"] * len(values))
+                conditions.append(f"c.{column} IN ({placeholders})")
+                params.extend(values)
+
+        # Соединяем категории через выбранный режим (AND или OR)
+        query += f" {mode} ".join(conditions)
+
+        # Выполняем запрос
+        return self._execute(query, params, fetchall=True)
 
     def get_user_categories(self, student_internal_id):
         query = "SELECT category FROM categories WHERE student_id = ?"
         return self._execute(query, (student_internal_id,), fetchall=True)
+
+    def query(self, query):
+        query = query
+        return self._execute(query)
 
 
 # Пример использования:
@@ -70,9 +114,21 @@ if __name__ == "__main__":
     # Добавляем пользователя
     try:
         db.add_user(916465455, "haru", "admin")
+        db.add_user(1001, "ivan", "student")
+        db.add_user(1002, "dima", "student")
+        db.add_user(1003, "botya", "student")
+        db.add_user(1004, "Gazan", "student")
+    except sqlite3.IntegrityError:
+        print("Пользователь уже существует123")
+
+    try:
+        db.add_category(1, "M", "Бакалавриат", "2", "ИВТ", "БИВ246", "Бюджет")
+        db.add_category(2, "Ж", "Магистратура", "3", "ПМ", "БПМ242", "Платник")
+        db.add_category(3, "Ж", "Бакалавриат", "4", "ПИ", "БПИ231", "Платник")
+        db.add_category(4, "M", "Специалитет", "5", "ИБ", "БИБ222", "Платник")
+        db.add_category(5, "M", "Бакалавриат", "1", "ИВТ", "БИВ246", "Платник")
     except sqlite3.IntegrityError:
         print("Пользователь уже существует")
 
-    # Получаем ID пользователя из базы и добавляем ему категорию
     user = db.get_user(916465455)
     print(user)

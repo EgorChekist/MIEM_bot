@@ -6,27 +6,32 @@ import asyncio
 import os
 from dotenv import load_dotenv
 import sqlite3
-from huggingface_hub import InferenceClient
+# from huggingface_hub import InferenceClient
 from telebot.asyncio_handler_backends import StatesGroup, State
 from telebot.asyncio_filters import StateFilter
 from telebot.asyncio_storage import StateMemoryStorage
 
-from typing import List
-from langchain_core.documents import Document
-from langchain_community.vectorstores import FAISS
-from langchain_huggingface import HuggingFaceEmbeddings
+# from typing import List
+# from langchain_core.documents import Document
+# from langchain_community.vectorstores import FAISS
+# from langchain_huggingface import HuggingFaceEmbeddings
+#
+# import torch
+# from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 
-import torch
-from transformers import AutoTokenizer, AutoModelForCausalLM, pipeline
 
-from database import Database
+from database.db import Database
 
-db = Database("/content/database.db")
+db = Database("database/database.db")
+db.create_tables()
+db.init_default_tokens()
 
 
 class BotStates(StatesGroup):
     waiting_for_message = State()
     waiting_for_confirm = State()
+
+    waiting_for_token = State()
 
 
 load_dotenv()
@@ -164,6 +169,15 @@ async def help_command(message):
     chat_id = message.chat.id
     await bot.send_message(chat_id, HELPER_TEXT)
 
+@bot.message_handler(commands=["login"])
+async def login_command(message):
+    chat_id = message.chat.id
+    await bot.set_state(message.from_user.id, BotStates.waiting_for_token, chat_id)
+
+    await bot.send_message(chat_id, "Введите ваш токен:")
+
+
+
 
 buttons_pressed = {}
 
@@ -218,7 +232,7 @@ async def reset_categories(call):
 
 @bot.callback_query_handler(func=lambda call: call.data == 'year')
 async def handle_year(call):
-    print("попали в этот обработчки")
+    print("попали в этот обработчики")
     markup = types.InlineKeyboardMarkup()
     btn1 = types.InlineKeyboardButton("1 курс", callback_data=f"year_1")
     btn2 = types.InlineKeyboardButton("2 курс", callback_data=f"year_2")
@@ -233,7 +247,7 @@ async def handle_year(call):
                                 reply_markup=markup)
 
 
-# Пользователь выбрал один из 5 годов обучния
+# Пользователь выбрал один из 5 годов обучения
 @bot.callback_query_handler(func=lambda call: call.data in ['year_1', 'year_2', 'year_3', 'year_4', 'year_5'])
 async def choose_year(call):
     print(call.data)
@@ -272,7 +286,7 @@ async def choose_year(call):
     user_id = call.message.chat.id
     program = call.data
     await check_user_in_dict(user_id)
-    # Если список годов пустой. То  добавляем сам список и нажатую кнопку
+    # Если список годов пустой. То добавляем сам список и нажатую кнопку
     if 'program' not in buttons_pressed[user_id]:
         buttons_pressed[user_id]['program'] = [program]
     else:  # Если список есть, то проверям, выбрана ли эта категория или нет
@@ -455,6 +469,32 @@ async def get_mailing_text_and_show_preview(message):
     # Переводим в состояние ожидания подтверждения (чтобы игнорировать лишние сообщения)
     await bot.set_state(user_id, BotStates.waiting_for_confirm, message.chat.id)
 
+@bot.message_handler(state=BotStates.waiting_for_token, content_types=['text'])
+async def process_token(message):
+    user_id = message.from_user.id
+    chat_id = message.chat.id
+    token = message.text.strip()
+
+    token_data = db.get_token(token)
+
+    if token_data is None:
+        await bot.send_message(chat_id, "❌ Неверный токен")
+        return
+
+    role = token_data[2]
+
+    existing_user = db.get_user(user_id)
+
+    if existing_user is None:
+        db.add_user(user_id, message.from_user.username or "unknown", role)
+    else:
+        db.update_user_role(user_id, role)
+
+    await bot.send_message(chat_id, f"✅ Вы успешно авторизованы как {role}")
+    await bot.delete_state(user_id, chat_id)
+
+
+
 
 @bot.callback_query_handler(func=lambda call: call.data == "execute_mailing_final", state=BotStates.waiting_for_confirm)
 async def handle_final_execution(call):
@@ -555,8 +595,24 @@ async def edit_mailing_text(call):
                                 text=editet_text,
                                 reply_markup=markup)
 
+def admin_required(func):
+    async def wrapper(message, *args, **kwargs):
+        """
+        Это декоратор прав. Он вас ненавидит.
+        """
+        user_id = message.from_user.id
+        user = db.get_user(user_id)
+
+        if user is None or user[-1] != "admin":
+            await bot.send_message(message.chat.id, "Нет доступа")
+            return
+
+        return await func(message, *args, **kwargs)
+    return wrapper
+
 
 @bot.message_handler(commands=["mail"])
+@admin_required
 async def mail(message):
     """
         Функция для отправки массовых рассылок
@@ -564,13 +620,7 @@ async def mail(message):
 
     # Сначала получает статус отправителя команды /main, чтобы её могли использовать только люди со статусом admin
     chat_id = message.chat.id
-    user_id = message.from_user.id
-    query = db.get_user(user_id)
-    print(query)
-    if query is None:
-        await bot.send_message(chat_id, "Ваш статус - Гость. Вы не можете использовать данную команду")
-    elif query[-1] != "admin":
-        await bot.send_message(chat_id, f"Ваш статус - {query[-1]}. Вы не можете использовать данную команду")
+
     print("123123123123")
     print(message)
     print(message.from_user.id)

@@ -43,8 +43,16 @@ class Database:
             FOREIGN KEY("student_id") REFERENCES "users"("id")
         );
         """
+        tokens_query = """
+           CREATE TABLE IF NOT EXISTS tokens (
+               id INTEGER PRIMARY KEY AUTOINCREMENT,
+               token TEXT NOT NULL UNIQUE,
+               role TEXT NOT NULL
+           );
+           """
         self._execute(users_query, commit=True)
         self._execute(categories_query, commit=True)
+        self._execute(tokens_query, commit=True)
 
     # --- Методы для работы с Users ---
 
@@ -55,6 +63,10 @@ class Database:
     def get_user(self, user_id):
         query = "SELECT * FROM users WHERE user_id = ?"
         return self._execute(query, (user_id,), fetchone=True)
+
+    def update_user_role(self, user_id, role):
+        query = "UPDATE users SET status = ? WHERE user_id = ?"
+        return self._execute(query, (role, user_id), commit=True)
 
     def add_category(self, student_internal_id, student_gender, student_degree, student_year, student_program,
                      student_group,
@@ -104,6 +116,25 @@ class Database:
     def query(self, query):
         query = query
         return self._execute(query)
+
+    #Токены для авторизации. Тут есть по дефолту 2 значения для админа и студента, но можно и добавлять их как пользователей
+    #Токен не привязан к акку - это ключ к получению статуса
+    def add_token(self, token, role):
+        query = "INSERT OR IGNORE INTO tokens (token, role) VALUES (?, ?)"
+        return self._execute(query, (token, role), commit=True)
+
+    def get_token(self, token):
+        query = "SELECT * FROM tokens WHERE token = ?"
+        return self._execute(query, (token,), fetchone=True)
+
+    def init_default_tokens(self):
+        default_tokens = {
+            "admin_secret_123": "admin",
+            "student_secret_456": "student"
+        }
+
+        for token, role in default_tokens.items():
+            self.add_token(token, role)
 
 
 # Пример использования:
